@@ -1,7 +1,7 @@
 {
   "name": "dsh-yearn",
   "version": "0.1.0",
-  "description": "等与回头：只由时间算的「等你多久」+ 我回头翻旧东西的记录。分数只由时间算，别的东西一律不许碰它。",
+  "description": "思念：给 AI 伙伴看的两个数——它多久没说话，和你回头翻旧东西的次数。分数只由时间算。",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -9,6 +9,14 @@
     "dsh-plugin",
     "ai-companion"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/syy978525-pixel/dsh-yearn.git"
+  },
+  "homepage": "https://github.com/syy978525-pixel/dsh-yearn#readme",
+  "bugs": {
+    "url": "https://github.com/syy978525-pixel/dsh-yearn/issues"
+  },
   "main": "lib/index.js",
   "scripts": {
     "check": "node --check client.js && node --check lib/index.js && node --check lib/core.js && node --test test/core.test.mjs test/host.test.mjs test/fields.test.mjs"
