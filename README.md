@@ -1,13 +1,25 @@
 # dsh-yearn
 
-**思念。** 设置面板里就叫这两个字。
+思念 / 恋しさ / Yearning
 
-给 AI 伙伴看的两个数：**等** 和 **回头**。
+---
+
+**中文**　给 AI 伙伴看的两个数：**等**（对方多久没说话）和**回头**（它自己回去翻旧记录的次数）。到了份上，往它的系统提示里塞一句很短的话，让它知道自己在想对方。不生成回复，不替它发消息。
+
+**English**　Two numbers for an AI companion: **waiting** (how long since the human last spoke) and **looking back** (how many times it went back to old logs on its own). When it adds up, a single short line is injected into its system prompt. It never writes replies and never sends messages for the AI.
+
+**日本語**　AIの相棒が見る二つの数字：**待ち**（相手がどれだけ黙っているか）と**振り返り**（自分から古い記録を読み返した回数）。溜まったら、システムプロンプトに短い一文を差し込むだけ。返信は書かず、代わりに送信もしない。
+
+---
+
+## 中文说明
+
+设置面板里，这一项就叫「思念」。
 
 - **等** = 他多久没说话了。只看时间。
 - **回头** = 我翻过几次旧东西、翻的是哪天。不参与出声，只做记录。
 
-到了份上，它往 AI 的系统提示里塞一句很短的话——不生成回复，不替 AI 发消息。
+到了份上，它往 AI 的系统提示里塞一句很短的话。那句话只给 AI 自己看，不会发出去。
 
 ## 一条铁律
 
