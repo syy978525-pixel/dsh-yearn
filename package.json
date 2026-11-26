@@ -45,5 +45,6 @@
         "@deepseek-ai/dsh-client-ui-settings-plugins"
       ]
     }
-  }
+  },
+  "author": "Fengli 枫离"
 }
