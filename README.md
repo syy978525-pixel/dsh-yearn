@@ -36,6 +36,21 @@
 
 面板上写着一句：**低分不代表没想。**
 
+## 安装（English / 日本語）
+
+```bash
+cd ~/.dsh/profiles/desktop
+pnpm add github:syy978525-pixel/dsh-yearn
+```
+
+然后把 `"dsh-yearn"` 加进同一个 `package.json` 的 `dsh.profile.bundles` 数组，重启 DSH，设置里会多出一项「思念」。
+
+⚠ **装完第一件事是配 `lookbackPaths`。** 默认值指向作者的目录，在你的机器上一个都匹配不到，「回头」会永远是 0，只剩「等」。
+
+同じ手順です：`pnpm add github:syy978525-pixel/dsh-yearn` → `dsh.profile.bundles` に `"dsh-yearn"` を追加 → DSH を再起動。
+
+⚠ 最初に `lookbackPaths` を設定してください。既定値は作者の環境のパスなので、あなたの環境では何も一致せず、「振り返り」はずっと 0 のままです。
+
 ## 怎么算的
 
 ```
