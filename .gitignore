@@ -1,0 +1,7 @@
+node_modules/
+.dsh-market/
+*.log
+*.tmp-*
+state.json
+config.json
+diag.log
