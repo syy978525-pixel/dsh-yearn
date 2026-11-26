@@ -1,7 +1,7 @@
 {
   "name": "dsh-yearn",
   "version": "0.1.0",
-  "description": "思念：给 AI 伙伴看的两个数——它多久没说话，和你回头翻旧东西的次数。分数只由时间算。",
+  "description": "思念 / 恋しさ / Yearning — two numbers for an AI companion: how long since the human last spoke, and how many times it went back to old logs. Score is time only.",
   "license": "MIT",
   "type": "module",
   "keywords": [
