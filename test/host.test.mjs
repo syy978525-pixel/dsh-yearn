@@ -138,7 +138,8 @@ test('回头：认得出来，会记到表里', async () => {
   const cfgPath = join(HOME, 'yearn', 'config.json')
   writeFileSync(cfgPath, JSON.stringify({
     enabledSessions: ['session-test'],
-    topHours: 14, curveK: 1.5, chanceLine: 40, chancePerPoint: 0.002, cooldownHours: 2,
+    curvePoints: [[3, 5], [8, 40], [14, 70], [20, 100]],
+    chanceLine: 40, chancePerPoint: 0.002, cooldownHours: 2,
     curfew: [], lookbackPaths: ['conversations\\', 'worlds\\default\\room\\'],
     lookbackCooldownMin: 0, lookbackKeepDays: 90, inject: true,
   }))
@@ -181,7 +182,7 @@ test('模拟接口对得上曲线', async () => {
     { method: 'GET', url: '/dsh-yearn/simulate?hours=9' }, res)
   const r = JSON.parse(res.out.body)
   assert.equal(r.ok, true)
-  assert.equal(r.score, 52)
+  assert.equal(r.score, 45, '9 小时该是 45 分')
 })
 
 test('sessions 接口列的是对话：只有名字和时间，不带路径', async () => {
@@ -201,24 +202,27 @@ test('sessions 接口列的是对话：只有名字和时间，不带路径', as
 test('面板改配置：POST 之后立刻生效，不用等他说下句话', async () => {
   const save = fakeRes()
   await host.routes.get('/dsh-yearn/config').handler(
-    fakeReq('POST', '/dsh-yearn/config', { topHours: 9, chancePerPoint: 0.01 }), save)
+    fakeReq('POST', '/dsh-yearn/config', { curvePoints: [[2, 60], [6, 100]], chancePerPoint: 0.01 }), save)
   const saved = JSON.parse(save.out.body)
   assert.equal(saved.ok, true)
-  assert.equal(saved.config.topHours, 9)
+  assert.deepEqual(saved.config.curvePoints, [[2, 60], [6, 100]])
   assert.equal(saved.config.chancePerPoint, 0.01)
 
-  // 模拟接口要立刻用新参数
+  // 模拟接口要立刻用新点表
   const sim = fakeRes()
   await host.routes.get('/dsh-yearn/simulate').handler(
-    { method: 'GET', url: '/dsh-yearn/simulate?hours=9' }, sim)
+    { method: 'GET', url: '/dsh-yearn/simulate?hours=2' }, sim)
   const r = JSON.parse(sim.out.body)
-  assert.equal(r.score, 100, '改成 9 小时到顶后，9 小时该是 100，实际 ' + r.score)
+  assert.equal(r.score, 60, '换成新点表后，2 小时该是 60，实际 ' + r.score)
 
   // 改回去
   const back = fakeRes()
   await host.routes.get('/dsh-yearn/config').handler(
-    fakeReq('POST', '/dsh-yearn/config', { topHours: 14, chancePerPoint: 0.002 }), back)
-  assert.equal(JSON.parse(back.out.body).config.topHours, 14)
+    fakeReq('POST', '/dsh-yearn/config', {
+      curvePoints: [[3, 5], [8, 40], [14, 70], [20, 100]],
+      chancePerPoint: 0.002,
+    }), back)
+  assert.equal(JSON.parse(back.out.body).config.curvePoints.length, 4)
 })
 
 test('勾选和取消勾选都是按对话 id，删得干净', async () => {
