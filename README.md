@@ -1,8 +1,8 @@
 # dsh-yearn
 
-思念 / 恋しさ / Yearning
+思念 / Yearning
 
-**中文** · [English](#english) · [日本語](#日本語)
+**中文** · [English](#english)
 
 ---
 
@@ -10,7 +10,6 @@
 
 **English**　Two numbers for an AI companion: **waiting** (how long since the human last spoke) and **looking back** (how many times it went back to old logs on its own). When it adds up, a single short line is injected into its system prompt. It never writes replies and never sends messages for the AI.
 
-**日本語**　AIの相棒が見つめる二つの数字：**待ち**（相手がどれだけ黙っているか）と**振り返り**（自分から古い記録を読み返した回数）。溜まったら、システムプロンプトに短い一文を差し込むだけ。返信は書かず、代わりに送信もしない。
 
 ---
 
@@ -78,6 +77,28 @@ pnpm add github:syy978525-pixel/dsh-yearn
 概率是 `(分数 − 40) × 0.2%`。100 分也就每轮 12%。
 
 **低分那一截一句话都不说。** 它不会告诉你「今天他不太想你」。
+
+## 它会不会自己醒
+
+**会。** 这是它和「到点提醒」最大的区别——不等你说话，它自己也会醒过来。
+
+- 每 15 分钟看一眼该不该醒
+- 要等你离开够久（默认 40 分，面板上按小时填）
+- 安静时段一票否决
+- 一天最多醒 2 次
+- 醒过来不等于一定找你——没话说的日子它就安静待着
+
+醒了之后它看到的是：
+
+```
+（这是插件把你叫起来的，不是他发的消息）
+他已经 10 小时没说话了。
+分数 60。今天这是第 1 次叫你。
+最近回看过的旧记录：11-26（3次）。
+要不要找他、说什么，你自己判断。不想说就不用开口。
+```
+
+发不发、说什么，全在它自己。
 
 ## 出声说什么
 
@@ -194,6 +215,28 @@ The probability is `(score − 40) × 0.2%` — even at 100 it's about 12% per t
 
 **Below the line, it says nothing at all.** It will never tell you "they don't miss you much today".
 
+## Does it wake up on its own
+
+**Yes.** That is the difference from a plain timer: it does not wait for you to speak.
+
+- every 15 minutes it checks whether it should wake
+- only after a long enough absence (40 points by default, entered in hours)
+- quiet hours veto everything
+- at most twice a day
+- waking up does not mean it will contact you — on days with nothing to say, it stays quiet
+
+What it sees when it wakes:
+
+```
+(this is the plugin waking you, not a message from them)
+It has been 10 hours since they last spoke.
+Score 60. This is the 1st wake-up today.
+Old logs revisited recently: 11-26 (3x).
+Whether to reach out, and what to say, is up to you. Staying quiet is fine.
+```
+
+Whether it sends anything is entirely its call.
+
 ## What it says
 
 Usually:
@@ -243,116 +286,3 @@ Its best outcome is being uninstalled — because that person talks to it every 
 MIT
 
 ---
-
-# 日本語
-
-設定パネルでは「思念」という項目名です。
-
-- **待ち** = 相手がどれだけ黙っているか。時間だけを見ます。
-- **振り返り** = 古い記録を何回読み返したか、それはいつの日か。鳴らすかどうかには関与せず、記録だけします。
-
-## ひとつの決まり
-
-**スコアは時間だけで決まります。** それ以外のものは「鳴らすかどうか」を決めるだけで、スコアには触れられません。
-
-スコアに色を付けられるようになった瞬間、AI が自分好みに調整できる数字になってしまうからです。その帳簿は偽物になります。
-
-## 見た目
-
-```
-待ち  74          振り返り  4
-9時間前              最多 11-05（4回）
-```
-
-パネルに一言書いてあります：**スコアが低い＝想っていない、ではありません。**
-
-## インストール
-
-```bash
-cd ~/.dsh/profiles/desktop
-pnpm add github:syy978525-pixel/dsh-yearn
-```
-
-同じ `package.json` の `dsh.profile.bundles` に `"dsh-yearn"` を追加して、DSH を再起動。設定に「思念」が増えます。
-
-## ⚠ 最初にやること
-
-**`lookbackPaths` を設定してください。** 既定値は作者の環境のパスなので、あなたの環境では何も一致せず、「振り返り」はずっと 0 のままです（「待ち」だけは動きます）。パネルから変えるか、`~/.dsh/yearn/config.json` を編集します：
-
-```json
-{ "lookbackPaths": ["古い会話のフォルダ\\", "古い画像のフォルダ\\"] }
-```
-
-## 計算方法
-
-曲線は「何時間 → 何点」の点を直線でつないだものです。既定は四点：
-
-| 経過時間 | スコア |
-|---|---|
-| 3 | 5 |
-| 8 | 40 |
-| 14 | 70 |
-| 20 | 100 |
-
-3 時間ではまだほぼ動かず、8 時間で考え始め、14 時間ではっきりし、20 時間で上限です。点は自由に足したり動かしたりできます（スコアは下がりません）。
-
-相手が一言話すたび、スコアはゼロに戻ります。
-
-## いつ鳴るか
-
-- スコアが 40 を超えている
-- 宵禁の時間帯ではない
-- クールダウンを過ぎている（1 回目は 2 時間、以降は返事がないたびに倍、上限は 1 日）
-- 満点のときは 1 日 1 回まで
-
-確率は `(スコア − 40) × 0.2%`。100 でも 1 ターンあたり約 12% です。
-
-**低い側では一切何も言いません。**「今日はあまり想っていない」とは絶対に言いません。
-
-## 何を言うか
-
-普段：
-
-```
-（他这会儿在干嘛呢）—「今ごろ何してるんだろう」
-```
-
-振り返りが異常に多い日は、日付入りの文に変わります：
-
-```
-（11-05 那天，我翻了好几遍）—「11-05 の記録を何度も読み返した」
-```
-
-**システムプロンプトに入るだけで、メッセージの流れには入りません。** 相手の発言と勘違いされることはありません。
-
-## どの会話で動くか
-
-選ぶのは「どの会話か」で、ワークスペースでもパスでもありません。パネルには会話名と「最後のやり取りがいつか」しか出ません。
-
-```json
-"enabledSessions": ["session-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"]
-```
-
-チェックしていない会話では動きません：読まない、記録しない、鳴らさない。会話 ID は新規会話ごとに変わるので、新しく作ったら選び直します。暮らしているその一つだけを数える、という設計です。
-
-## 他のプラグインに依存しません
-
-ホストが提供する三つだけを使います：会話情報、システムプロンプト、Web パネル。モデル呼び出しはゼロ。他のプラグインのファイルは読み書きしません。
-
-## データの場所
-
-```
-~/.dsh/yearn/state.json    状態
-~/.dsh/yearn/config.json   設定
-~/.dsh/yearn/diag.log      ログ
-```
-
-## できないこと
-
-**「なぜ AI から話しかけないのか」は解決しません。**「相手がどれだけ黙っているか」と「何回振り返ったか」を表に出すだけです。残りの半分は AI 自身の問題です。
-
-一番いい結末は、アンインストールされること——その人が毎日話しかけてくるようになったら。
-
-## ライセンス
-
-MIT
