@@ -1,55 +1,61 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  scoreAt, hoursForScore, pForMidScore, curfewMs, effectiveHours, inCurfew, nextCurfewEnd,
+  scoreAt, hoursForScore, normPoints, curfewMs, effectiveHours, inCurfew, nextCurfewEnd,
   chanceOf, cooldownMs, lookbackHits, dayKey, pruneLookback, lookbackSpike,
   topLookbackDay, dayStartOf, lineSpike, LINE_IDLE,
 } from '../lib/core.js'
 
 const H = 3600000
 
-test('分数曲线：表上的数和算出来的一样（默认 p=1.5）', () => {
+test('分数曲线：按点表连起来（默认 3h 5、8h 40、14h 70、20h 100）', () => {
   assert.equal(scoreAt(0), 0)
   assert.equal(scoreAt(1), 2)
-  assert.equal(scoreAt(3), 10)
-  assert.equal(scoreAt(6), 28)
-  assert.equal(scoreAt(9), 52)
-  assert.equal(scoreAt(12), 79)
-  assert.equal(scoreAt(14), 100)
+  assert.equal(scoreAt(3), 5)
+  assert.equal(scoreAt(6), 26)
+  assert.equal(scoreAt(8), 40)
+  assert.equal(scoreAt(9), 45)
+  assert.equal(scoreAt(12), 60)
+  assert.equal(scoreAt(14), 70)
+  assert.equal(scoreAt(20), 100)
   assert.equal(scoreAt(30), 100)
   assert.equal(scoreAt(-5), 0)
 })
 
-test('反过来推：到 52 分要多少小时', () => {
-  const h = hoursForScore(52)
-  assert.ok(Math.abs(h - 9) < 0.15, '应为 9 小时，实际 ' + h)
+test('反过来推：40 分在 8 小时，70 分在 14 小时', () => {
+  assert.equal(hoursForScore(40), 8)
+  assert.equal(hoursForScore(70), 14)
   assert.equal(hoursForScore(0), 0)
-  assert.equal(hoursForScore(100), 14)
+  assert.equal(hoursForScore(100), 20)
+  const h = hoursForScore(55)
+  assert.ok(h > 10 && h < 12, '55 分该在 10-12 小时之间，实际 ' + h)
 })
 
-test('改到顶时长，曲线跟着变', () => {
-  assert.equal(scoreAt(7, { topHours: 7 }), 100)
-  assert.equal(scoreAt(3, { topHours: 7 }), 28)
+test('点表可以自己改：加一个点，曲线跟着变', () => {
+  const pts = [[2, 10], [5, 30], [10, 90]]
+  assert.equal(scoreAt(2, { curvePoints: pts }), 10)
+  assert.equal(scoreAt(5, { curvePoints: pts }), 30)
+  assert.equal(scoreAt(10, { curvePoints: pts }), 90)
+  assert.equal(scoreAt(3.5, { curvePoints: pts }), 20)
+  assert.equal(scoreAt(15, { curvePoints: pts }), 100)
 })
 
-test('曲线能两头弯：一半时间可以低到 20 分，也可以高到 70 分', () => {
-  // 前慢后快
-  const pSlow = pForMidScore(20)
-  assert.ok(scoreAt(7, { curveK: pSlow }) <= 22, '一半时间该在 20 分附近')
-  assert.ok(pSlow > 2, 'p 应该大于 2，实际 ' + pSlow)
-  // 前快后慢
-  const pFast = pForMidScore(70)
-  assert.ok(scoreAt(7, { curveK: pFast }) >= 68, '一半时间该在 70 分附近')
-  assert.ok(pFast < 1, 'p 应该小于 1，实际 ' + pFast)
-  // 直线
-  assert.ok(Math.abs(pForMidScore(50) - 1) < 0.01, '一半时间 50 分就是直线')
-})
-
-test('p 的边界不会算出 NaN', () => {
-  for (const s of [0, 1, 99, 100, -5, NaN]) {
-    const v = pForMidScore(s)
-    assert.ok(Number.isFinite(v) && v > 0, 's=' + s + ' 算出 ' + v)
+test('点表会自己修正：乱序、倒退的分数、只有一点', () => {
+  const weird = normPoints([[10, 80], [3, 40], [6, 20]])
+  assert.deepEqual(weird.map((x) => x[0]), [3, 6, 10], '时间该排好序')
+  // 分数不能回头，只能往上
+  for (let i = 1; i < weird.length; i++) {
+    assert.ok(weird[i][1] > weird[i - 1][1], '第 ' + i + ' 个点分数没往上')
   }
+  // 只给一个点 → 用默认
+  assert.equal(normPoints([[5, 50]]).length, 4)
+  assert.equal(normPoints(null).length, 4)
+})
+
+test('到顶之后就停在 100', () => {
+  const pts = [[1, 50], [3, 100]]
+  assert.equal(scoreAt(3, { curvePoints: pts }), 100)
+  assert.equal(scoreAt(100, { curvePoints: pts }), 100)
 })
 
 test('宵禁：同一天里的一段', () => {
