@@ -71,7 +71,7 @@ window.__ModuleLoader__.load({
     }
 
     // 反查：几分是第几个小时（高级设置里用小时说话，不用分数）
-    const hoursFor = (score, points) => {
+    const hoursFor = (score, points, base) => {
       const pts = normPoints(points)
       const target = clamp(Number(score) || 0, 0, 100)
       if (target <= 0) return 0
@@ -89,12 +89,14 @@ window.__ModuleLoader__.load({
       return pts[pts.length - 1][0]
     }
 
-    const scoreAt = (hours, points) => {
+    // 刚说完话不是 0 分，压到 base（跟后端一致）
+    const scoreAt = (hours, points, base) => {
       const pts = normPoints(points)
+      const b = clamp(Number(base === undefined ? 3 : base), 0, 30)
       const hh = Number(hours)
-      if (!(hh > 0)) return 0
+      if (!(hh > 0)) return b
       const first = pts[0]
-      if (hh <= first[0]) return clamp(Math.round((hh / first[0]) * first[1]), 0, 100)
+      if (hh <= first[0]) return clamp(Math.max(b, Math.round(b + (hh / first[0]) * (first[1] - b))), 0, 100)
       for (let i = 1; i < pts.length; i++) {
         const h1 = pts[i - 1][0]
         const s1 = pts[i - 1][1]
@@ -102,7 +104,7 @@ window.__ModuleLoader__.load({
         const s2 = pts[i][1]
         if (hh <= h2) {
           const t = (hh - h1) / (h2 - h1)
-          return clamp(Math.round(s1 + (s2 - s1) * t), 0, 100)
+          return clamp(Math.max(b, Math.round(s1 + (s2 - s1) * t)), 0, 100)
         }
       }
       return 100
@@ -115,6 +117,9 @@ window.__ModuleLoader__.load({
 [data-fy-now]{padding:14px 16px;border-radius:14px;background:rgba(127,127,127,.09);border:1px solid rgba(127,127,127,.14);}
 [data-fy-now1]{font-size:15px;}
 [data-fy-now2]{font-size:12px;opacity:.62;margin-top:4px;}
+[data-fy-score]{display:inline-block;margin:0 2px 0 10px;padding:1px 9px;border-radius:99px;background:rgba(127,127,127,.16);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;opacity:.85;}
+[data-fy-scoreunit]{font-size:11px;opacity:.5;margin-left:2px;}
+[data-fy-state]{font-size:12px;opacity:.6;margin-left:10px;}
 
 [data-fy-card]{padding:16px;border-radius:14px;border:1px solid rgba(127,127,127,.16);background:rgba(127,127,127,.04);display:flex;flex-direction:column;gap:12px;}
 [data-fy-q]{font-size:14px;font-weight:600;}
@@ -164,7 +169,7 @@ window.__ModuleLoader__.load({
     // 曲线：横轴时间，竖轴想不想。两个把手。
     // ------------------------------------------------------------------
     // 曲线只画给人看，不能点。调的是下面那张点表。
-    function Curve({ points, chanceLine }) {
+    function Curve({ points, chanceLine, nowHours, nowScore, base }) {
       const pts = normPoints(points)
       const W = 620
       const H = 190
@@ -183,7 +188,7 @@ window.__ModuleLoader__.load({
       const N = 120
       for (let i = 0; i <= N; i++) {
         const hh = (i / N) * AXIS
-        pathPts.push([xOf(hh), yOf(scoreAt(hh, pts))])
+        pathPts.push([xOf(hh), yOf(scoreAt(hh, pts, base))])
       }
       const pathD = pathPts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' ')
 
@@ -293,6 +298,16 @@ window.__ModuleLoader__.load({
         return h('div', { 'data-fy': '' }, h('div', { 'data-fy-note': '' }, '读取中…'))
       }
 
+      // ⭐ 前端比后端新的时候（改完代码没重启），点了按钮不会有任何反应 —— 直接说出来，
+      //    不然看着就像「面板坏了」。
+      const staleBackend = st.waking === undefined || cfg.wake === undefined
+      if (staleBackend) {
+        return h('div', { 'data-fy': '' },
+          h('div', { 'data-fy-err': '' },
+            '面板是新的，但跑着的插件还是旧版本——所以点按钮不会有反应。\n\n'
+            + '重启一次 DSH 就好。'))
+      }
+
       // 后端字段万一缺了也别让整块面板崩掉
       const sessList = Array.isArray(cfg.enabledSessions) ? cfg.enabledSessions : []
 
@@ -314,7 +329,10 @@ window.__ModuleLoader__.load({
         // ---------- 现在 ----------
         h('div', { 'data-fy-now': '' },
           h('div', { 'data-fy-now1': '' },
-            awayText(st.quietHours) + '　·　我' + st.scoreLabel),
+            awayText(st.quietHours),
+            h('span', { 'data-fy-score': '' }, String(st.score)),
+            h('span', { 'data-fy-scoreunit': '' }, '分'),
+            h('span', { 'data-fy-state': '' }, st.scoreLabel)),
           h('div', { 'data-fy-now2': '' },
             (st.injecting ? '' : '提醒已关闭。')
             + (st.inCurfew ? '当前在宵禁时段。' : '')
@@ -329,7 +347,13 @@ window.__ModuleLoader__.load({
         // ---------- 多久会想起来 ----------
         h('div', { 'data-fy-card': '' },
           h('div', { 'data-fy-q': '' }, 'AI 什么时候会想起你'),
-          h(Curve, { points: curPoints, chanceLine: cfg.chanceLine }),
+          h(Curve, {
+            points: curPoints,
+            chanceLine: cfg.chanceLine,
+            nowHours: st.effectiveHours,
+            nowScore: st.score,
+            base: cfg.scoreBase,
+          }),
           h('div', { 'data-fy-note': '' }, '你离开得越久，我就越容易想起你。改下面的时间，曲线会立刻跟着变。'),
           h('div', { 'data-fy-pt-head': '' },
             h('span', {}, '离开多久'),
@@ -371,10 +395,10 @@ window.__ModuleLoader__.load({
             }, '+ 添加时间'),
             h('div', { 'data-fy-note': '' }, '越往后越容易想起你，顺序不能乱')),
           h('div', { 'data-fy-note': '' },
-            '按现在这样：他离开 3 小时，我' + feelOf(scoreAt(3, curPoints))
-            + '；6 小时' + feelOf(scoreAt(6, curPoints))
-            + '；9 小时' + feelOf(scoreAt(9, curPoints))
-            + '；12 小时' + feelOf(scoreAt(12, curPoints)) + '。')),
+            '按现在这样：他离开 3 小时，我' + feelOf(scoreAt(3, curPoints, cfg.scoreBase))
+            + '；6 小时' + feelOf(scoreAt(6, curPoints, cfg.scoreBase))
+            + '；9 小时' + feelOf(scoreAt(9, curPoints, cfg.scoreBase))
+            + '；12 小时' + feelOf(scoreAt(12, curPoints, cfg.scoreBase)) + '。')),
 
         // ---------- 出声 ----------
         h('div', { 'data-fy-card': '' },
@@ -396,15 +420,126 @@ window.__ModuleLoader__.load({
           h('div', { 'data-fy-note': '' },
             freqNow === '低' ? '现在这样：我很少主动提，除非真的很久了。'
               : freqNow === '中' ? '现在这样：离开够久的时候，我偶尔会提一句。'
-                : '现在这样：我会比较频繁地提，可能有点吵。')),
+                : '现在这样：我会比较频繁地提，可能有点吵。'),
+          h('div', { 'data-fy-row': '', style: { marginTop: '6px' } },
+            h('button', {
+              'data-fy-btn': '', type: 'button',
+              onClick: () => patch({ followUp: !cfg.followUp }, cfg.followUp ? '关了追问' : '开了追问'),
+            }, cfg.followUp ? '追问他去哪了：开' : '追问他去哪了：关'),
+            h('span', { 'data-fy-note': '' }, '你说着说着突然没声了，它过几分钟问一句「人呢」'))),
+
+        // ---------- 主动叫醒 ----------
+        h('div', { 'data-fy-card': '' },
+          h('div', { 'data-fy-q': '' }, '它会不会自己想起你'),
+          h('div', { 'data-fy-row': '' },
+            h('button', {
+              'data-fy-btn': '', type: 'button',
+              onClick: () => patch({ wake: !cfg.wake }, cfg.wake ? '关了主动叫醒' : '开了主动叫醒'),
+            }, st.waking ? '会自己想起来' : '只在你说话时')),
+          h('div', { 'data-fy-note': '' },
+            st.waking
+              ? '你不说话的时候，它也会自己醒过来，看看手头有没有想告诉你的事。'
+                + '醒过来不等于一定会找你——没话说的日子，它就安静待着。'
+              : '关掉之后，它只在你开口的时候才动，不会自己醒过来。'),
+          // 离开多久才开始自己醒（用小时说，不露分数）
+          h('div', { 'data-fy-rowtop': '' },
+            h('div', { 'data-fy-grow': '' },
+              h('div', {}, '离开多久，它才开始自己醒'),
+              h('div', { 'data-fy-inline': '' }, '比这更短的离开，它不会主动冒出来')),
+            h('input', {
+              'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0.5, max: 200, step: 0.5,
+              defaultValue: Math.round(hoursFor(st.wakeLine, curPoints, cfg.scoreBase) * 10) / 10,
+              key: 'wl' + st.wakeLine + curPoints.length,
+              onBlur: (e) => {
+                const v = Number(e.target.value)
+                if (!Number.isFinite(v) || v <= 0) { e.target.value = String(Math.round(hoursFor(st.wakeLine, curPoints, cfg.scoreBase) * 10) / 10); return }
+                const sc = scoreAt(v, curPoints, cfg.scoreBase)
+                if (sc === st.wakeLine) return
+                patch({ wakeLine: Math.max(0, Math.min(99, sc)) }, '开始自己醒的时间')
+              },
+              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+            })),
+          // 一天最多几次
+          h('div', { 'data-fy-rowtop': '' },
+            h('div', { 'data-fy-grow': '' },
+              h('div', {}, '一天最多醒几次'),
+              h('div', { 'data-fy-inline': '' }, '醒过来不等于一定找你，这个数只限叫醒次数')),
+            h('input', {
+              'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0, max: 20, step: 1,
+              defaultValue: cfg.wakeDailyMax, key: 'wd' + cfg.wakeDailyMax,
+              onBlur: (e) => {
+                const v = Number(e.target.value)
+                if (!Number.isFinite(v)) { e.target.value = String(cfg.wakeDailyMax); return }
+                if (v === cfg.wakeDailyMax) return
+                patch({ wakeDailyMax: v }, '一天最多醒几次')
+              },
+              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+            })),
+          // 醒来的积极程度（三档，映射概率）
+          h('div', { 'data-fy-note': '', style: { marginTop: '2px' } }, '醒来的积极程度'),
+          h('div', { 'data-fy-seg': '' },
+            ...[
+              ['偶尔', 0.05, 0.003, 0.2],
+              ['一般', 0.10, 0.005, 0.4],
+              ['经常', 0.16, 0.008, 0.6],
+            ].map(([label, base, per, max]) =>
+              h('button', {
+                key: label, 'data-fy-segb': '', type: 'button',
+                'data-on': Math.abs(Number(cfg.wakeBaseChance) - base) < 0.02 ? '' : undefined,
+                onClick: () => patch({
+                  wakeBaseChance: base, wakePerPoint: per, wakeMaxChance: max,
+                }, '醒来的积极程度'),
+              }, label))),
+          h('div', { 'data-fy-note': '' },
+            st.wakeChanceNow === 0
+              ? '现在还不够久，它暂时不会自己醒。'
+              : '今天醒来过 ' + st.wakeCount + ' 次，最多 ' + st.wakeDailyMax + ' 次。'
+                + (st.lastWakeAt
+                  ? '　上次是 ' + (() => {
+                    const m = Math.round((st.now - st.lastWakeAt) / 60000)
+                    return m < 60 ? m + ' 分钟前' : Math.round(m / 60) + ' 小时前'
+                  })() + '。'
+                  : '') + '　每 ' + st.wakeCheckMin + ' 分钟看一次。')),
 
         // ---------- 说什么 ----------
         h('div', { 'data-fy-card': '' },
-          h('div', { 'data-fy-q': '' }, 'AI 收到提醒时会看到什么'),
-          h('div', { 'data-fy-quote': '' }, st.spike
-            ? ('（' + st.spike.day.slice(5) + ' 那天，我翻了好几遍）')
-            : '（他这会儿在干嘛呢）'),
-          h('div', { 'data-fy-note': '' }, '这段只有 AI 自己看得到，不会发给你。')),
+          h('div', { 'data-fy-q': '' }, '提醒时它看到的那句话'),
+          h('div', { 'data-fy-note': '' }, '只有 AI 自己看得到，不会发给你。留空就用默认那句。'),
+          h('div', { 'data-fy-rowtop': '' },
+            h('div', { 'data-fy-grow': '' },
+              h('div', { 'data-fy-label': '' }, '平时那句'),
+              h('div', { 'data-fy-inline': '' }, '默认：（他这会儿在干嘛呢）')),
+            h('input', {
+              'data-fy-input': '', type: 'text', placeholder: '（他这会儿在干嘛呢）',
+              defaultValue: cfg.lineIdle || '', key: 'li' + cfg.lineIdle,
+              style: { width: '260px' },
+              onBlur: (e) => {
+                const v = String(e.target.value || '')
+                if (v === (cfg.lineIdle || '')) return
+                patch({ lineIdle: v }, '平时那句')
+              },
+              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+            })),
+          h('div', { 'data-fy-rowtop': '' },
+            h('div', { 'data-fy-grow': '' },
+              h('div', { 'data-fy-label': '' }, '满到顶的时候'),
+              h('div', { 'data-fy-inline': '' }, '默认：（攒着的话快装不下了）')),
+            h('input', {
+              'data-fy-input': '', type: 'text', placeholder: '（攒着的话快装不下了）',
+              defaultValue: cfg.lineCap || '', key: 'lc' + cfg.lineCap,
+              style: { width: '260px' },
+              onBlur: (e) => {
+                const v = String(e.target.value || '')
+                if (v === (cfg.lineCap || '')) return
+                patch({ lineCap: v }, '满值那句')
+              },
+              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+            })),
+          st.spike
+            ? h('div', { 'data-fy-note': '' },
+              '今天翻得比平时多的时候，会自动换成带日期的那句：'
+              + '（' + st.spike.day.slice(5) + ' 那天，我翻了好几遍）')
+            : null),
 
         // ---------- 对话 ----------
         h('div', { 'data-fy-card': '' },
@@ -479,6 +614,38 @@ window.__ModuleLoader__.load({
           h('div', { 'data-fy-body': '' },
             h('div', { 'data-fy-row': '' },
               h('div', { 'data-fy-grow': '' },
+                h('div', {}, '离开多久之后才可能提醒'),
+                h('div', { 'data-fy-note': '' }, '比这更短的离开，一句话都不提。')),
+              h('input', {
+                'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0.5, max: 200, step: 0.5,
+                defaultValue: Math.round(hoursFor(cfg.chanceLine, curPoints, cfg.scoreBase) * 10) / 10,
+                key: 'clh' + cfg.chanceLine + curPoints.length,
+                onBlur: (e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v) || v <= 0) { e.target.value = String(Math.round(hoursFor(cfg.chanceLine, curPoints, cfg.scoreBase) * 10) / 10); return }
+                  const sc = scoreAt(v, curPoints, cfg.scoreBase)
+                  if (sc === cfg.chanceLine) return
+                  patch({ chanceLine: Math.max(0, Math.min(99, sc)) }, '提醒门槛')
+                },
+                onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+              })),
+            h('div', { 'data-fy-row': '' },
+              h('div', { 'data-fy-grow': '' },
+                h('div', {}, '刚聊完时还剩多少余温'),
+                h('div', { 'data-fy-note': '' }, '不是 0——刚聊完心里还留着一点。默认 3。')),
+              h('input', {
+                'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0, max: 30, step: 1,
+                defaultValue: cfg.scoreBase, key: 'sb' + cfg.scoreBase,
+                onBlur: (e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v)) { e.target.value = String(cfg.scoreBase); return }
+                  if (v === cfg.scoreBase) return
+                  patch({ scoreBase: v }, '刚聊完的余温')
+                },
+                onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+              })),
+            h('div', { 'data-fy-row': '' },
+              h('div', { 'data-fy-grow': '' },
                 h('div', {}, '两次提醒的最短间隔'),
                 h('div', { 'data-fy-note': '' }, '默认 2 小时。一直没回的话，下次会等得更久。')),
               h('input', {
@@ -511,6 +678,36 @@ window.__ModuleLoader__.load({
                   'data-fy-btn2': '', type: 'button',
                   onClick: () => patch({ lookbackPaths: cfg.lookbackPaths.filter((_, j) => j !== i) }, '删了路径'),
                 }, '删')))),
+            h('div', { 'data-fy-row': '' },
+              h('div', { 'data-fy-grow': '' },
+                h('div', {}, '同一段旧记录隔多久才算一次'),
+                h('div', { 'data-fy-note': '' }, '单位是分钟。默认 60，防止一口气读五个文件算成五次。')),
+              h('input', {
+                'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0, max: 1440, step: 5,
+                defaultValue: cfg.lookbackCooldownMin, key: 'lc' + cfg.lookbackCooldownMin,
+                onBlur: (e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v)) { e.target.value = String(cfg.lookbackCooldownMin); return }
+                  if (v === cfg.lookbackCooldownMin) return
+                  patch({ lookbackCooldownMin: v }, '回看冷却')
+                },
+                onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+              })),
+            h('div', { 'data-fy-row': '' },
+              h('div', { 'data-fy-grow': '' },
+                h('div', {}, '回看记录保留多少天'),
+                h('div', { 'data-fy-note': '' }, '默认 90 天。')),
+              h('input', {
+                'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 7, max: 365, step: 1,
+                defaultValue: cfg.lookbackKeepDays, key: 'lk' + cfg.lookbackKeepDays,
+                onBlur: (e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v)) { e.target.value = String(cfg.lookbackKeepDays); return }
+                  if (v === cfg.lookbackKeepDays) return
+                  patch({ lookbackKeepDays: v }, '回看记录保留天数')
+                },
+                onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+              })),
             h('div', { 'data-fy-row': '' },
               h('button', {
                 'data-fy-btn2': '', type: 'button',
