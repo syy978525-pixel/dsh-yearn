@@ -21,7 +21,11 @@ function makeHost() {
   const routes = new Map()
   const timers = []
 
+  const sent = []
   const agent = {
+    // 让 pickModel 拿得到（真实宿主从 session.requestHeader 或 options 里给）
+    options: { provider: 'fake', model: 'fake' },
+    followup: async (m) => { sent.push(m) },
     session: {
       id: 'session-test',
       snapshotEvents: () => events,
@@ -45,7 +49,7 @@ function makeHost() {
     systemPrompt: { context: () => () => {} },
   }
 
-  return { ctx, agent, events, handlers, agentCtxs, routes, timers }
+  return { ctx, agent, events, handlers, agentCtxs, routes, timers, sent }
 }
 
 function fakeRes() {
@@ -114,6 +118,12 @@ test('他说话 → 等的时间归零', () => {
   st.lastUserAt = Date.now() - 20 * 3600000
   writeFileSync(statePath, JSON.stringify(st))
   // 重开一份插件读这个状态
+  writeFileSync(join(HOME, 'yearn', 'config.json'), JSON.stringify({
+    enabledSessions: ['session-test'], inject: true,
+    curvePoints: [[3, 5], [8, 40], [14, 70], [20, 100]], scoreBase: 3,
+    chanceLine: 40, chancePerPoint: 0.002, cooldownHours: 2, curfew: [],
+    lookbackPaths: ['conversations'], lookbackCooldownMin: 60, lookbackKeepDays: 90,
+  }))
   const h2 = makeHost()
   apply(h2.ctx)
   h2.handlers['agent/inbox/inserted']({ message: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '在吗' }] } })
@@ -248,4 +258,142 @@ test('勾选和取消勾选都是按对话 id，删得干净', async () => {
   assert.deepEqual(w2.enabled, ['session-other'], '取消之后还剩：' + JSON.stringify(w2.enabled))
   const row = w2.sessions.find((x) => x.id === 'session-test')
   if (row) assert.equal(row.enabled, false, '这个对话应该显示未启用')
+})
+
+test('聊天期间分数慢慢往下走，不是一句一刀', async () => {
+  const statePath = join(HOME, 'yearn', 'state.json')
+  const now = Date.now()
+  writeFileSync(statePath, JSON.stringify({
+    startedAt: now - 86400000,
+    score: 60,
+    lastTick: now - 10 * 60000,
+    lastUserAt: now,          // 刚说过话 → 会话中
+    lookback: {},
+  }))
+  const h = makeHost()
+  apply(h.ctx)
+  const res = fakeRes()
+  await h.routes.get('/dsh-yearn/state').handler({ method: 'GET', url: '/dsh-yearn/state' }, res)
+  const s = JSON.parse(res.out.body)
+  // 一次推进最多按 3 分钟算：60 - 1.2 × 3 = 56.4
+  assert.ok(s.score >= 54 && s.score <= 58, '聊了 3 分钟该从 60 降到 56 附近，实际 ' + s.score)
+})
+
+test('长时间没跑（DSH 关了一晚上）也不会把分数打到底', async () => {
+  const statePath = join(HOME, 'yearn', 'state.json')
+  const now = Date.now()
+  writeFileSync(statePath, JSON.stringify({
+    startedAt: now - 86400000,
+    score: 70,
+    lastTick: now - 10 * 3600000,   // 十小时没推进
+    lastUserAt: now - 1000,          // 刚说过话（聊天中）
+    lookback: {},
+  }))
+  const h = makeHost()
+  apply(h.ctx)
+  const res = fakeRes()
+  await h.routes.get('/dsh-yearn/state').handler({ method: 'GET', url: '/dsh-yearn/state' }, res)
+  const s = JSON.parse(res.out.body)
+  assert.ok(s.score >= 60, '十小时没跑也只该降一点点，实际 ' + s.score)
+})
+
+test('他走了之后分数往上爬', async () => {
+  const statePath = join(HOME, 'yearn', 'state.json')
+  const now = Date.now()
+  writeFileSync(statePath, JSON.stringify({
+    startedAt: now - 86400000,
+    score: 10,
+    lastTick: now - 1000,
+    lastUserAt: now - 9 * 3600000,   // 9 小时前说过话 → 早走了
+    lookback: {},
+  }))
+  const h = makeHost()
+  apply(h.ctx)
+  const res = fakeRes()
+  await h.routes.get('/dsh-yearn/state').handler({ method: 'GET', url: '/dsh-yearn/state' }, res)
+  const s = JSON.parse(res.out.body)
+  assert.ok(s.score >= 40, '9 小时没人说话，分数该爬到 40 以上，实际 ' + s.score)
+})
+
+test('话题断了会追问一句，且只问一次', async () => {
+  const statePath = join(HOME, 'yearn', 'state.json')
+  const now = Date.now()
+  writeFileSync(statePath, JSON.stringify({
+    startedAt: now - 86400000,
+    score: 30,
+    lastTick: now - 1000,
+    lastUserAt: now - 10 * 60000,   // 断了 10 分钟
+    followUpAt: now - 1000,          // 预定的追问时刻已经过了
+    followUpDone: 0,
+    lookback: {},
+  }))
+  const h = makeHost()
+  apply(h.ctx)
+  // 通过接口打开：只勾这个对话、没有宵禁、追问开着
+  await h.routes.get('/dsh-yearn/config').handler(
+    fakeReq('POST', '/dsh-yearn/config', {
+      enabledSessions: ['session-test'],
+      inject: true,
+      curfew: [],
+      followUp: true,
+    }), fakeRes())
+  const fn = h.agentCtxs[0].text
+  const first = fn()
+  assert.ok(/干嘛去了|人呢|说到一半|忙起来/.test(first), '该追问了，实际：' + JSON.stringify(first))
+  const second = fn()
+  assert.equal(second, '', '同一次中断只该问一遍，第二次返回了：' + JSON.stringify(second))
+})
+
+function readState() {
+  return JSON.parse(readFileSync(join(HOME, 'yearn', 'state.json'), 'utf8'))
+}
+
+test('到点了会主动叫醒会话（不看对方说没说话）', async () => {
+  const statePath = join(HOME, 'yearn', 'state.json')
+  const now = Date.now()
+  writeFileSync(statePath, JSON.stringify({
+    startedAt: now - 86400000,
+    score: 60,
+    lastTick: now - 1000,
+    lastUserAt: now - 10 * 3600000,   // 十小时没说话
+    lastSpeaker: 'assistant',
+    lastWakeAt: 0, wakeStreak: 0, wakeDay: '', wakeCount: 0, lastCheckAt: 0,
+    lookback: { '2026-11-26': 3 },
+  }))
+  writeFileSync(join(HOME, 'yearn', 'config.json'), JSON.stringify({
+    enabledSessions: ['session-test'], inject: true, wake: true,
+    wakeLine: 40, wakeBaseChance: 1, wakeMaxChance: 1, wakeCheckMin: 1, wakeDailyMax: 2,
+    curvePoints: [[3, 5], [8, 40], [14, 70], [20, 100]], scoreBase: 3,
+    chanceLine: 40, chancePerPoint: 0.002, cooldownHours: 2,
+    curfew: [], lookbackPaths: ['conversations'], lookbackCooldownMin: 60, lookbackKeepDays: 90,
+  }))
+  const h = makeHost()
+  apply(h.ctx)
+  await new Promise((r) => setTimeout(r, 300))
+  assert.ok(h.sent.length >= 1, '应该主动叫醒一次，实际 ' + h.sent.length)
+  const msg = h.sent[0]
+  assert.equal(msg.source.kind, 'yearn-wake', '标记不对：' + msg.source.kind)
+  const txt = msg.content[0].text
+  assert.ok(/10 小时没说话/.test(txt), '没告诉他多久没说话：' + txt)
+})
+
+test('安静时段里不叫醒', async () => {
+  const statePath = join(HOME, 'yearn', 'state.json')
+  const now = Date.now()
+  writeFileSync(statePath, JSON.stringify({
+    startedAt: now - 86400000, score: 90, lastTick: now - 1000,
+    lastUserAt: now - 30 * 3600000, lastSpeaker: 'assistant',
+    lastWakeAt: 0, wakeStreak: 0, wakeDay: '', wakeCount: 0, lastCheckAt: 0, lookback: {},
+  }))
+  writeFileSync(join(HOME, 'yearn', 'config.json'), JSON.stringify({
+    enabledSessions: ['session-test'], inject: true, wake: true,
+    wakeLine: 40, wakeBaseChance: 1, wakeMaxChance: 1, wakeCheckMin: 1, wakeDailyMax: 2,
+    curvePoints: [[3, 5], [8, 40], [14, 70], [20, 100]], scoreBase: 3,
+    chanceLine: 40, chancePerPoint: 0.002, cooldownHours: 2,
+    curfew: [['00:00', '23:59']], lookbackPaths: ['conversations'], lookbackCooldownMin: 60, lookbackKeepDays: 90,
+  }))
+  const h = makeHost()
+  apply(h.ctx)
+  await new Promise((r) => setTimeout(r, 300))
+  assert.equal(h.sent.length, 0, '安静时段不该叫醒，实际叫了 ' + h.sent.length + ' 次')
 })
