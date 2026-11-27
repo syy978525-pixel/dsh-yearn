@@ -27,22 +27,86 @@ window.__ModuleLoader__.load({
     }
     const clamp = (n, a, b) => Math.min(b, Math.max(a, n))
 
-    // 分数 = 100 × (t / T) ^ p。p = 1 是直线，大于 1 是前慢后快。
-    const scoreAt = (hours, T, k) => {
-      const TT = Math.max(0.1, Number(T) || 14)
-      const pp = Math.min(6, Math.max(0.05, Number(k) || 1.5))
-      if (!(hours > 0)) return 0
-      if (hours >= TT) return 100
-      return clamp(Math.round(100 * Math.pow(hours / TT, pp)), 0, 100)
+    // 曲线是一串「几小时 → 几分」的点，中间直线连起来（跟 lib/core.js 一致）
+    const DEF_POINTS = [[3, 5], [8, 40], [14, 70], [20, 100]]
+
+    const normPoints = (raw) => {
+      const src = Array.isArray(raw) && raw.length >= 2 ? raw : DEF_POINTS
+      const pts = []
+      for (const q of src) {
+        if (!Array.isArray(q) || q.length < 2) continue
+        const hh = Number(q[0])
+        const ss = Number(q[1])
+        if (!Number.isFinite(hh) || !Number.isFinite(ss) || !(hh > 0)) continue
+        pts.push([clamp(Math.round(hh * 100) / 100, 0.1, 240), clamp(Math.round(ss), 0, 100)])
+      }
+      if (pts.length < 2) return DEF_POINTS.map((x) => x.slice())
+      pts.sort((a, b) => a[0] - b[0])
+      let last = 0
+      for (const q of pts) {
+        if (q[1] <= last) q[1] = Math.min(100, last + 1)
+        last = q[1]
+      }
+      return pts
     }
 
-    // 「一半时间要有几分」→ p
-    const pForMid = (score) => {
-      const sv = Math.max(2, Math.min(98, Number(score) || 50))
-      return Math.min(6, Math.max(0.05, Math.log(100 / sv) / Math.log(2)))
+    // 分数翻成人话——面板上不写分数，只写感觉
+    // 分数翻成人话。面板上默认只给人看这个，不露分数。
+    const feelOf = (sc) => {
+      const v = Number(sc) || 0
+      if (v >= 92) return '非常容易想起你'
+      if (v >= 60) return '明显想起你'
+      if (v >= 30) return '开始惦记你'
+      if (v >= 10) return '偶尔想起你'
+      return '暂时很安静'
     }
 
+    // 「离开了多久」说成话
+    const awayText = (h) => {
+      const v = Number(h) || 0
+      if (v < 0.1) return '他刚说完话'
+      if (v < 1) return '他离开了 ' + Math.round(v * 60) + ' 分钟'
+      if (v < 24) return '他离开了 ' + (Math.round(v * 10) / 10) + ' 小时'
+      return '他离开了 ' + Math.round(v / 24) + ' 天'
+    }
 
+    // 反查：几分是第几个小时（高级设置里用小时说话，不用分数）
+    const hoursFor = (score, points) => {
+      const pts = normPoints(points)
+      const target = clamp(Number(score) || 0, 0, 100)
+      if (target <= 0) return 0
+      for (let i = 1; i < pts.length; i++) {
+        const h1 = pts[i - 1][0]
+        const s1 = pts[i - 1][1]
+        const h2 = pts[i][0]
+        const s2 = pts[i][1]
+        if (target <= s2) {
+          if (s2 === s1) return h2
+          const t = (target - s1) / (s2 - s1)
+          return h1 + (h2 - h1) * Math.max(0, t)
+        }
+      }
+      return pts[pts.length - 1][0]
+    }
+
+    const scoreAt = (hours, points) => {
+      const pts = normPoints(points)
+      const hh = Number(hours)
+      if (!(hh > 0)) return 0
+      const first = pts[0]
+      if (hh <= first[0]) return clamp(Math.round((hh / first[0]) * first[1]), 0, 100)
+      for (let i = 1; i < pts.length; i++) {
+        const h1 = pts[i - 1][0]
+        const s1 = pts[i - 1][1]
+        const h2 = pts[i][0]
+        const s2 = pts[i][1]
+        if (hh <= h2) {
+          const t = (hh - h1) / (h2 - h1)
+          return clamp(Math.round(s1 + (s2 - s1) * t), 0, 100)
+        }
+      }
+      return 100
+    }
 
     const CSS = `
 [data-fy]{display:flex;flex-direction:column;gap:14px;padding:2px 2px 28px;font-size:13px;line-height:1.65;}
@@ -99,150 +163,77 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
     // 曲线：横轴时间，竖轴想不想。两个把手。
     // ------------------------------------------------------------------
-    function Curve({ T, k, onDrag }) {
-      const svgRef = React.useRef(null)
-      const [draft, setDraft] = React.useState(null)
-      const draftRef = React.useRef(null)
-      const dragRef = React.useRef('')
-      // 拖动结束要调最新的 onDrag，但监听器只注册一次
-      const onDragRef = React.useRef(onDrag)
-      onDragRef.current = onDrag
-
+    // 曲线只画给人看，不能点。调的是下面那张点表。
+    function Curve({ points, chanceLine }) {
+      const pts = normPoints(points)
       const W = 620
-      const H = 200
-      const padL = 58
+      const H = 190
+      const padL = 62
       const padB = 26
       const padT = 16
       const right = W - 14
-      // 轴至少画到 24 小时；到顶时间更长就把轴拉长，别把曲线截断
-      const AXIS = Math.max(24, Math.ceil((Number(T) || 14) / 6) * 6)
-
-      const cur = draft || { T, k }
-      const cT = clamp(Number(cur.T) || 14, 0.5, AXIS)
-      const cK = clamp(Number(cur.k) || 1.5, 0.05, 6)
+      const topH = pts[pts.length - 1][0]
+      const AXIS = Math.max(24, Math.ceil(topH / 6) * 6)
 
       const xOf = (hh) => padL + (hh / AXIS) * (right - padL)
-      const yOf = (s) => padT + (1 - s / 100) * (H - padT - padB)
-      const hOfX = (px) => clamp(((px - padL) / (right - padL)) * AXIS, 0.5, AXIS)
-      const sOfY = (py) => clamp((1 - (py - padT) / (H - padT - padB)) * 100, 3, 97)
+      const yOf = (sc) => padT + (1 - sc / 100) * (H - padT - padB)
 
-      const pts = []
-      for (let i = 0; i <= 90; i++) {
-        const hh = (i / 90) * AXIS
-        pts.push([xOf(hh), yOf(scoreAt(hh, cT, cK))])
+      // 采样画平滑的样子（其实是折线，采样只是让它在坐标里连续）
+      const pathPts = []
+      const N = 120
+      for (let i = 0; i <= N; i++) {
+        const hh = (i / N) * AXIS
+        pathPts.push([xOf(hh), yOf(scoreAt(hh, pts))])
       }
-      const pathD = pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' ')
-
-      const midT = cT / 2
-      const midX = xOf(midT)
-      const midY = yOf(scoreAt(midT, cT, cK))
-
-      const start = (kind) => (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        dragRef.current = kind
-        draftRef.current = { T: cT, k: cK }
-        setDraft({ T: cT, k: cK })
-      }
-
-      // 监听器只注册一次（以前每次渲染都重注册，拖着拖着会断）
-      React.useEffect(() => {
-        const move = (e) => {
-          const kind = dragRef.current
-          if (!kind || !svgRef.current) return
-          const rect = svgRef.current.getBoundingClientRect()
-          if (!rect.width || !rect.height) return
-          const px = ((e.clientX - rect.left) / rect.width) * W
-          const py = ((e.clientY - rect.top) / rect.height) * H
-          const base = draftRef.current || { T: cT, k: cK }
-          if (kind === 'end') {
-            const t = Math.round(hOfX(px) * 2) / 2
-            draftRef.current = { T: t, k: base.k }
-            setDraft({ T: t, k: base.k })
-          } else if (kind === 'mid') {
-            const s = sOfY(py)
-            const t = Math.max(0.5, base.T)
-            const pp = pForMid(s)
-            draftRef.current = { T: t, k: pp }
-            setDraft({ T: t, k: pp })
-          }
-        }
-        const up = () => {
-          if (!dragRef.current) return
-          dragRef.current = ''
-          const nx = draftRef.current
-          setDraft(null)
-          draftRef.current = null
-          if (nx && typeof onDragRef.current === 'function') onDragRef.current(nx.T, nx.k)
-        }
-        window.addEventListener('mousemove', move)
-        window.addEventListener('mouseup', up)
-        window.addEventListener('pointermove', move)
-        window.addEventListener('pointerup', up)
-        return () => {
-          window.removeEventListener('mousemove', move)
-          window.removeEventListener('mouseup', up)
-          window.removeEventListener('pointermove', move)
-          window.removeEventListener('pointerup', up)
-        }
-      }, [])
+      const pathD = pathPts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' ')
 
       const step = AXIS / 8
       const ticks = []
       for (let i = 0; i <= 8; i++) ticks.push(Math.round(i * step * 10) / 10)
 
       const bands = [
-        [85, 100, '85-100'],
-        [60, 85, '60-85'],
-        [30, 60, '30-60'],
-        [0, 30, '0-30'],
+        [85, 100, '很容易想起你'],
+        [60, 85, '经常想起你'],
+        [30, 60, '开始想起你'],
+        [0, 30, '暂时没什么感觉'],
       ]
 
-      const midLabelY = Math.max(12, midY - 13)
+      const line = clamp(Number(chanceLine) || 40, 0, 99)
+      // 轴标题：GPT 说普通人看不出横轴是「离开了多久」
+      const axisX = (padL + right) / 2
 
-      return h('div', {},
-        h('svg', { 'data-fy-svg': '', ref: svgRef, viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'xMidYMid meet' },
-          ...bands.map(([a, b, label]) => h('g', { key: 'bd' + a },
-            h('rect', {
-              x: padL, y: yOf(b), width: Math.max(0, right - padL), height: Math.max(0, yOf(a) - yOf(b)),
-              fill: 'rgba(127,127,127,.05)',
-            }),
-            h('text', { x: padL - 8, y: (yOf(a) + yOf(b)) / 2 + 3.5, fill: 'rgba(127,127,127,.65)', 'font-size': 11, 'text-anchor': 'end' }, label))),
-          ...ticks.map((hh) => h('line', {
-            key: 'g' + hh, x1: xOf(hh), y1: padT, x2: xOf(hh), y2: H - padB,
-            stroke: 'rgba(127,127,127,.09)', 'stroke-width': 1,
-          })),
-          ...ticks.map((hh) => h('text', {
-            key: 't' + hh, x: xOf(hh), y: H - 8, fill: 'rgba(127,127,127,.6)', 'font-size': 10.5, 'text-anchor': 'middle',
-          }, hh + 'h')),
-          h('path', { d: pathD, fill: 'none', stroke: 'rgba(127,127,127,.9)', 'stroke-width': 2.4, 'stroke-linejoin': 'round' }),
-          h('line', {
-            x1: xOf(cT), y1: yOf(100), x2: xOf(cT), y2: H - padB,
-            stroke: 'rgba(255,168,60,.5)', 'stroke-width': 1, 'stroke-dasharray': '3 4',
-          }),
-          h('circle', {
-            'data-fy-handle': '', cx: xOf(cT), cy: yOf(100), r: 9,
-            fill: 'rgba(255,168,60,.95)', stroke: 'rgba(0,0,0,.35)', 'stroke-width': 1.5,
-            onMouseDown: start('end'), onPointerDown: start('end'),
-          }),
-          h('text', {
-            x: clamp(xOf(cT), padL + 46, right - 46), y: yOf(100) + 22,
-            fill: 'rgba(255,168,60,.95)', 'font-size': 11.5, 'text-anchor': 'middle',
-          }, cT + 'h 到顶'),
-          h('circle', {
-            'data-fy-handle': '', cx: midX, cy: midY, r: 8,
-            fill: 'rgba(120,200,255,.95)', stroke: 'rgba(0,0,0,.35)', 'stroke-width': 1.5,
-            onMouseDown: start('mid'), onPointerDown: start('mid'),
-          }),
-          h('text', {
-            x: clamp(midX, padL + 34, right - 34), y: midLabelY,
-            fill: 'rgba(120,200,255,.95)', 'font-size': 11, 'text-anchor': 'middle',
-          }, Math.round(midT) + 'h ' + scoreAt(midT, cT, cK) + ' 分')),
-        h('div', { 'data-fy-note': '', style: { marginTop: '8px' } },
-          '橙点：左右拖，改多久到顶。蓝点：上下拖，改一半时间有多少分——往上拖前面起得快，往下拖前面趴着。'),
-        h('div', { 'data-fy-note': '' },
-          '当前：3h ' + scoreAt(3, cT, cK) + ' 分，6h ' + scoreAt(6, cT, cK)
-          + ' 分，12h ' + scoreAt(12, cT, cK) + ' 分。'))
+      return h('svg', {
+        'data-fy-svg': '', viewBox: '0 0 ' + W + ' ' + H,
+        preserveAspectRatio: 'xMidYMid meet',
+      },
+      ...bands.map(([a, b, label]) => h('g', { key: 'bd' + a },
+        h('rect', {
+          x: padL, y: yOf(b), width: Math.max(0, right - padL), height: Math.max(0, yOf(a) - yOf(b)),
+          fill: 'rgba(127,127,127,.05)',
+        }),
+        h('text', { x: padL - 8, y: (yOf(a) + yOf(b)) / 2 + 3.5, fill: 'rgba(200,200,200,.92)', 'font-size': 11.5, 'text-anchor': 'end' }, label))),
+      ...ticks.map((hh) => h('line', {
+        key: 'g' + hh, x1: xOf(hh), y1: padT, x2: xOf(hh), y2: H - padB,
+        stroke: 'rgba(127,127,127,.09)', 'stroke-width': 1,
+      })),
+      ...ticks.map((hh) => h('text', {
+        key: 't' + hh, x: xOf(hh), y: H - 8, fill: 'rgba(127,127,127,.6)', 'font-size': 10.5, 'text-anchor': 'middle',
+      }, hh + 'h')),
+      h('line', {
+        x1: padL, y1: yOf(line), x2: right, y2: yOf(line),
+        stroke: 'rgba(255,168,60,.45)', 'stroke-width': 1, 'stroke-dasharray': '4 4',
+      }),
+      h('text', { x: axisX, y: H - 1, fill: 'rgba(170,170,170,.75)', 'font-size': 10.5, 'text-anchor': 'middle' }, '距离上次说话过了多久'),
+      h('text', { x: right - 2, y: yOf(line) - 5, fill: 'rgba(255,168,60,.9)', 'font-size': 10.5, 'text-anchor': 'end' }, '从这里开始，我会收到提醒'),
+      h('path', { d: pathD, fill: 'none', stroke: 'rgba(127,127,127,.9)', 'stroke-width': 2.4, 'stroke-linejoin': 'round' }),
+      ...pts.map((q, i) => h('g', { key: 'p' + i },
+        h('circle', { cx: xOf(q[0]), cy: yOf(q[1]), r: 4.2, fill: 'rgba(120,200,255,.95)' }),
+        true
+          ? h('text', {
+            x: clamp(xOf(q[0]), padL + 26, right - 26), y: yOf(q[1]) + (q[1] > 85 ? 17 : -10),
+            fill: 'rgba(120,200,255,.95)', 'font-size': 10, 'text-anchor': 'middle',
+          }, q[0] + 'h')
+          : null)))
     }
 
     // ------------------------------------------------------------------
@@ -255,8 +246,6 @@ window.__ModuleLoader__.load({
       const [wsErr, setWsErr] = React.useState('')
       const [msg, setMsg] = React.useState('')
       const [err, setErr] = React.useState('')
-      const [slide, setSlide] = React.useState(null)
-      const slideTimer = React.useRef(null)
 
       const loadState = async () => {
         try {
@@ -282,10 +271,7 @@ window.__ModuleLoader__.load({
         loadCfg()
         loadWs()
         const t = setInterval(loadState, 5000)
-        return () => {
-          clearInterval(t)
-          if (slideTimer.current) clearTimeout(slideTimer.current)
-        }
+        return () => { clearInterval(t) }
       }, [])
 
       const patch = async (kv, note) => {
@@ -310,37 +296,14 @@ window.__ModuleLoader__.load({
       // 后端字段万一缺了也别让整块面板崩掉
       const sessList = Array.isArray(cfg.enabledSessions) ? cfg.enabledSessions : []
 
-      const T = Number(cfg.topHours) || 14
-      const k = Number(cfg.curveK) || 1.5
-      // 显示用：滑块最多 24，超了就夹住
-      const shownT = slide === null ? clamp(T, 1, 24) : slide
-      const outOfRange = slide === null && Math.abs(T - shownT) > 1e-9
-
-      // ⭐ 滑块停手 300ms 就存，不依赖 mouseup（拖出控件外松手时 mouseup 不一定来）
-      const onSlide = (v) => {
-        setSlide(v)
-        if (slideTimer.current) clearTimeout(slideTimer.current)
-        slideTimer.current = setTimeout(() => {
-          setSlide(null)
-          if (Math.abs(v - T) > 1e-9) patch({ topHours: v }, '多久到顶')
-        }, 300)
-      }
+      // 曲线上的点：几小时 → 几分
+      const curPoints = normPoints(cfg.curvePoints)
 
       const nudgeAgo = st.lastNudgeAt
         ? (st.now - st.lastNudgeAt < 3600000
           ? Math.max(1, Math.round((st.now - st.lastNudgeAt) / 60000)) + ' 分钟前'
           : Math.round((st.now - st.lastNudgeAt) / 3600000) + ' 小时前')
         : '还没有'
-
-      // 多少小时（有效时长）能到 60 分
-      const hToSixty = (() => {
-        for (let i = 1; i <= 200; i++) {
-          const hh = i * 0.25
-          if (hh >= shownT) return shownT
-          if (scoreAt(hh, shownT, k) >= 60) return hh
-        }
-        return shownT
-      })()
 
       const per = Number(cfg.chancePerPoint) || 0
       const chanceFull = Math.round((100 - Number(cfg.chanceLine)) * per * 100)
@@ -351,7 +314,7 @@ window.__ModuleLoader__.load({
         // ---------- 现在 ----------
         h('div', { 'data-fy-now': '' },
           h('div', { 'data-fy-now1': '' },
-            '距上条消息 ' + st.quietHours + ' 小时　·　分数 ' + st.score + '（' + st.scoreLabel + '）'),
+            awayText(st.quietHours) + '　·　我' + st.scoreLabel),
           h('div', { 'data-fy-now2': '' },
             (st.injecting ? '' : '提醒已关闭。')
             + (st.inCurfew ? '当前在宵禁时段。' : '')
@@ -363,69 +326,55 @@ window.__ModuleLoader__.load({
               + (st.topLookback ? '，最多 ' + st.topLookback.day.slice(5) + '（' + st.topLookback.n + ' 次）' : ''))
             : null),
 
-        // ---------- 滑块 ----------
+        // ---------- 多久会想起来 ----------
         h('div', { 'data-fy-card': '' },
-          h('div', { 'data-fy-q': '' }, '多少小时没有新消息？'),
-          h('div', { 'data-fy-row': '' },
-            h('div', { 'data-fy-big': '' }, String(shownT)),
-            h('div', { 'data-fy-note': '', style: { paddingBottom: '8px' } }, '小时'),
+          h('div', { 'data-fy-q': '' }, 'AI 什么时候会想起你'),
+          h(Curve, { points: curPoints, chanceLine: cfg.chanceLine }),
+          h('div', { 'data-fy-note': '' }, '你离开得越久，我就越容易想起你。改下面的时间，曲线会立刻跟着变。'),
+          h('div', { 'data-fy-pt-head': '' },
+            h('span', {}, '离开多久'),
+            h('span', {}, '我会'),
+            h('span', {})),
+          ...curPoints.map((q, i) => h('div', { 'data-fy-row': '', key: 'cp' + i + '-' + q[0] + '-' + q[1] },
             h('input', {
-              type: 'range', 'data-fy-slider': '', min: '1', max: '24', step: '0.5',
-              value: shownT,
-              onChange: (e) => onSlide(Number(e.target.value)),
-            })),
+              'data-fy-input': '', 'data-fy-time': '', type: 'number', min: 0.1, max: 240, step: 0.5,
+              defaultValue: q[0], key: 'cph' + i + q[0], title: '离开多少小时',
+              onBlur: (e) => {
+                const v = Number(e.target.value)
+                const next = curPoints.map((x) => x.slice())
+                if (!Number.isFinite(v) || v <= 0) { e.target.value = String(q[0]); return }
+                if (Math.abs(v - q[0]) < 1e-9) return
+                next[i][0] = v
+                patch({ curvePoints: next }, '时间点')
+              },
+              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
+            }),
+            h('span', { 'data-fy-unit': '' }, '小时'),
+            h('span', { 'data-fy-feel': '' }, feelOf(q[1])),
+            h('button', {
+              'data-fy-btn2': '', type: 'button', title: '删掉这个时间点',
+              onClick: () => {
+                if (curPoints.length <= 2) return
+                patch({ curvePoints: curPoints.filter((_, j) => j !== i) }, '删了一个时间点')
+              },
+            }, '×'))),
+          h('div', { 'data-fy-row': '' },
+            h('button', {
+              'data-fy-btn': '', type: 'button',
+              onClick: () => {
+                const last = curPoints[curPoints.length - 1]
+                const prev = curPoints[curPoints.length - 2] || [0, 0]
+                const nh = Math.round(((last[0] + Math.max(1, last[0] - prev[0])) * 10)) / 10
+                const ns = Math.min(100, last[1] + 10)
+                patch({ curvePoints: curPoints.concat([[nh, ns]]) }, '加了一个点')
+              },
+            }, '+ 添加时间'),
+            h('div', { 'data-fy-note': '' }, '越往后越容易想起你，顺序不能乱')),
           h('div', { 'data-fy-note': '' },
-            '满 ' + hToSixty + ' 小时，分数到 60。'
-            + (outOfRange ? '（当前 ' + T + ' 小时，超出滑块范围，请用数字框修改。）' : '')),
-          outOfRange
-            ? h('div', { 'data-fy-row': '' },
-              h('input', {
-                'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0.5, max: 240, step: 0.5,
-                defaultValue: T, key: 'tp' + T,
-                onBlur: (e) => {
-                  const v = Number(e.target.value)
-                  if (!Number.isFinite(v)) { e.target.value = String(T); return }
-                  if (Math.abs(v - T) < 1e-9) return
-                  patch({ topHours: v }, '多久到顶')
-                },
-                onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
-              }))
-            : null),
-
-        // ---------- 曲线 ----------
-        h('div', { 'data-fy-card': '' },
-          h('div', { 'data-fy-q': '' }, '分数曲线'),
-          h(Curve, {
-            T: T,
-            k,
-            onDrag: (t, kk) => patch({ topHours: t, curveK: kk }, '曲线'),
-          }),
-          h('div', { 'data-fy-row': '' },
-            h('div', { 'data-fy-grow': '' }, '到顶小时'),
-            h('input', {
-              'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0.5, max: 240, step: 0.5,
-              defaultValue: T, key: 'cT' + T,
-              onBlur: (e) => {
-                const v = Number(e.target.value)
-                if (!Number.isFinite(v)) { e.target.value = String(T); return }
-                if (Math.abs(v - T) < 1e-9) return
-                patch({ topHours: v }, '到顶时间')
-              },
-              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
-            })),
-          h('div', { 'data-fy-row': '' },
-            h('div', { 'data-fy-grow': '' }, '陡度'),
-            h('input', {
-              'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0.05, max: 6, step: 0.05,
-              defaultValue: k, key: 'cK' + k,
-              onBlur: (e) => {
-                const v = Number(e.target.value)
-                if (!Number.isFinite(v)) { e.target.value = String(k); return }
-                if (Math.abs(v - k) < 1e-9) return
-                patch({ curveK: v }, '陡度')
-              },
-              onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
-            }))),
+            '按现在这样：他离开 3 小时，我' + feelOf(scoreAt(3, curPoints))
+            + '；6 小时' + feelOf(scoreAt(6, curPoints))
+            + '；9 小时' + feelOf(scoreAt(9, curPoints))
+            + '；12 小时' + feelOf(scoreAt(12, curPoints)) + '。')),
 
         // ---------- 出声 ----------
         h('div', { 'data-fy-card': '' },
@@ -435,7 +384,7 @@ window.__ModuleLoader__.load({
               'data-fy-btn': '', type: 'button',
               onClick: () => patch({ inject: !cfg.inject }, cfg.inject ? '关了' : '开了'),
             }, cfg.inject ? '开' : '关'),
-            h('span', { 'data-fy-note': '' }, '关闭后只记录分数，不注入提示。')),
+            h('span', { 'data-fy-note': '' }, '关掉之后，我还是知道你离开了多久，但不会收到提醒。')),
           h('div', { 'data-fy-note': '', style: { marginTop: '2px' } }, '提醒频率'),
           h('div', { 'data-fy-seg': '' },
             ...[['低', 0.0006], ['中', 0.002], ['高', 0.006]].map(([label, v]) =>
@@ -445,20 +394,22 @@ window.__ModuleLoader__.load({
                 onClick: () => patch({ chancePerPoint: v }, '提醒频率'),
               }, label))),
           h('div', { 'data-fy-note': '' },
-            '当前：' + freqNow + '。满分时每轮提醒概率约 ' + chanceFull + '%。')),
+            freqNow === '低' ? '现在这样：我很少主动提，除非真的很久了。'
+              : freqNow === '中' ? '现在这样：离开够久的时候，我偶尔会提一句。'
+                : '现在这样：我会比较频繁地提，可能有点吵。')),
 
         // ---------- 说什么 ----------
         h('div', { 'data-fy-card': '' },
-          h('div', { 'data-fy-q': '' }, '提醒文字'),
+          h('div', { 'data-fy-q': '' }, 'AI 收到提醒时会看到什么'),
           h('div', { 'data-fy-quote': '' }, st.spike
             ? ('（' + st.spike.day.slice(5) + ' 那天，我翻了好几遍）')
             : '（他这会儿在干嘛呢）'),
-          h('div', { 'data-fy-note': '' }, '只注入系统提示，不发送。回头次数异常时换成带日期的那句。')),
+          h('div', { 'data-fy-note': '' }, '这段只有 AI 自己看得到，不会发给你。')),
 
         // ---------- 对话 ----------
         h('div', { 'data-fy-card': '' },
-          h('div', { 'data-fy-q': '' }, '在哪个对话里生效'),
-          h('div', { 'data-fy-note': '' }, '只有勾上的对话会计分。其他对话不读、不记、不提醒。'),
+          h('div', { 'data-fy-q': '' }, '在哪些聊天里生效'),
+          h('div', { 'data-fy-note': '' }, '只有勾上的聊天才算数。其他的不参与计时，也不会收到提醒。'),
           wsErr ? h('div', { 'data-fy-err': '' }, '读不到对话列表：' + wsErr) : null,
           (ws && ws.sessions && ws.sessions.length)
             ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
@@ -476,13 +427,13 @@ window.__ModuleLoader__.load({
                 h('span', { 'data-fy-tag': '', 'data-on': r.enabled ? '' : undefined }, r.enabled ? '启用' : '未启用'))))
             : h('div', { 'data-fy-note': '' }, ws ? '当前没有打开的对话。' : '读取中…'),
           h('div', { 'data-fy-note': '' }, sessList.length
-            ? ('已勾选 ' + sessList.length + ' 个对话')
-            : '（一个都没勾，所以哪儿都不跑）')),
+            ? ('已选 ' + sessList.length + ' 个聊天')
+            : '（一个都没勾，所以哪里都不生效）')),
 
         // ---------- 宵禁 ----------
         h('div', { 'data-fy-card': '' },
-          h('div', { 'data-fy-q': '' }, '宵禁'),
-          h('div', { 'data-fy-note': '' }, '这段时间不算分，也不会提醒。跨半夜也行。'),
+          h('div', { 'data-fy-q': '' }, '安静时段'),
+          h('div', { 'data-fy-note': '' }, '这段时间里离开时长不再累加，也不会提醒。支持跨过半夜，比如 23:00 到次日 08:00。'),
           ...(cfg.curfew.length
             ? cfg.curfew.map((seg, i) => h('div', { 'data-fy-row': '', key: 'cf' + i },
               h('input', {
@@ -522,31 +473,14 @@ window.__ModuleLoader__.load({
             onClick: () => patch({ curfew: cfg.curfew.concat([['23:30', '09:00']]) }, '加了一段'),
           }, '+ 加一段')),
 
-        h('div', { 'data-fy-warn': '' }, '低分只表示这段时间没有新消息。'),
-
         // ---------- 不常用的 ----------
         h('details', { 'data-fy-more': '' },
           h('summary', {}, '高级设置'),
           h('div', { 'data-fy-body': '' },
             h('div', { 'data-fy-row': '' },
               h('div', { 'data-fy-grow': '' },
-                h('div', {}, '最低触发分数'),
-                h('div', { 'data-fy-note': '' }, '低于此分数不提醒。默认 40。')),
-              h('input', {
-                'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0, max: 99,
-                defaultValue: cfg.chanceLine, key: 'cl' + cfg.chanceLine,
-                onBlur: (e) => {
-                  const v = Number(e.target.value)
-                  if (!Number.isFinite(v)) { e.target.value = String(cfg.chanceLine); return }
-                  if (Math.abs(v - Number(cfg.chanceLine)) < 1e-9) return
-                  patch({ chanceLine: v }, '起跑线')
-                },
-                onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
-              })),
-            h('div', { 'data-fy-row': '' },
-              h('div', { 'data-fy-grow': '' },
-                h('div', {}, '提醒冷却'),
-                h('div', { 'data-fy-note': '' }, '默认 2 小时。未回复则每次翻倍。')),
+                h('div', {}, '两次提醒的最短间隔'),
+                h('div', { 'data-fy-note': '' }, '默认 2 小时。一直没回的话，下次会等得更久。')),
               h('input', {
                 'data-fy-input': '', 'data-fy-num': '', type: 'number', min: 0.1, max: 48, step: 0.5,
                 defaultValue: cfg.cooldownHours, key: 'cd' + cfg.cooldownHours,
@@ -559,8 +493,8 @@ window.__ModuleLoader__.load({
                 onKeyDown: (e) => { if (e.key === 'Enter') e.target.blur() },
               })),
             h('div', {},
-              h('div', {}, '回头记录路径'),
-              h('div', { 'data-fy-note': '' }, '工具调用参数包含这些字符串时计一次。'),
+              h('div', {}, '回看记录识别规则（开发者用，通常不用改）'),
+              h('div', { 'data-fy-note': '' }, '用来判断 AI 是不是真的回看了聊天记录。普通用户不用管。'),
               ...cfg.lookbackPaths.map((p, i) => h('div', { 'data-fy-row': '', key: 'lk' + i, style: { marginTop: '6px' } },
                 h('input', {
                   'data-fy-input': '', 'data-fy-grow': '', defaultValue: p, key: 'lkv' + i + p,
@@ -581,27 +515,29 @@ window.__ModuleLoader__.load({
               h('button', {
                 'data-fy-btn2': '', type: 'button',
                 onClick: () => patch({ lookbackPaths: cfg.lookbackPaths.concat(['']) }, '加了一条路径'),
-              }, '+ 加一条'),
+              }, '+ 添加识别规则'),
               h('button', {
                 'data-fy-btn2': '', type: 'button',
                 onClick: async () => {
+                  if (!window.confirm('清空所有回看次数？不会删掉你们的聊天记录。')) return
                   try {
                     await postJson(API + '/reset', { lookback: true })
                     setMsg('回头记录已清空')
                     loadState()
                   } catch (e) { setMsg('清除失败：' + String((e && e.message) || e)) }
                 },
-              }, '清空回头记录'),
+              }, '清空回看次数'),
               h('button', {
                 'data-fy-btn2': '', type: 'button',
                 onClick: async () => {
+                  if (!window.confirm('从现在重新计算离开时间？已有的聊天记录不受影响。')) return
                   try {
                     await postJson(API + '/reset', {})
                     setMsg('计时已重置')
                     loadState()
                   } catch (e) { setMsg('重置失败：' + String((e && e.message) || e)) }
                 },
-              }, '重置计时')))),
+              }, '重新开始计时')))),
 
         msg ? h('div', { 'data-fy-msg': '' }, msg) : null
       )
