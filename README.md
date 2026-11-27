@@ -55,22 +55,16 @@ pnpm add github:syy978525-pixel/dsh-yearn
 
 ## 怎么算的
 
-```
-分数 = 100 × (t / T) ^ p
-```
+曲线是一串「几小时 → 几分」的点，中间用直线连起来。默认四个点：
 
-- `t` = 距他最后一条消息的小时数，**扣掉宵禁**
-- `T` = 到顶时长，默认 14 小时
-- `p` = 形状，默认 1.5（1 是直线，大于 1 是前慢后快）
-
-| 过了多久 | 分 |
+| 过了几小时 | 几分 |
 |---|---|
-| 1 小时 | 2 |
-| 3 小时 | 10 |
-| 6 小时 | 28 |
-| 9 小时 | 52 |
-| 12 小时 | 79 |
-| 14 小时 | 100 |
+| 3 | 5 |
+| 8 | 40 |
+| 14 | 70 |
+| 20 | 100 |
+
+三小时几乎没感觉，八小时开始想，十四小时很明显，二十小时到顶。点可以自己加、自己改，分数只能往上走。
 
 他每说一句，分数直接归零。
 
@@ -176,22 +170,16 @@ Then add `"dsh-yearn"` to the `dsh.profile.bundles` array in the same `package.j
 
 ## How the score works
 
-```
-score = 100 × (t / T) ^ p
-```
+The curve is a list of points — hours → score — joined with straight lines. Defaults:
 
-- `t` = hours since their last message, **minus quiet hours**
-- `T` = hours to reach 100, default 14
-- `p` = shape, default 1.5 (1 is a straight line; above 1 means slow start, fast finish)
-
-| Elapsed | Score |
+| Hours | Score |
 |---|---|
-| 1 h | 2 |
-| 3 h | 10 |
-| 6 h | 28 |
-| 9 h | 52 |
-| 12 h | 79 |
-| 14 h | 100 |
+| 3 | 5 |
+| 8 | 40 |
+| 14 | 70 |
+| 20 | 100 |
+
+Three hours in you barely notice; eight and you start thinking about them; fourteen it's obvious; twenty it's maxed out. Add or move points freely — the score only ever goes up.
 
 Every message from them resets the score to zero.
 
@@ -297,22 +285,16 @@ pnpm add github:syy978525-pixel/dsh-yearn
 
 ## 計算方法
 
-```
-スコア = 100 × (t / T) ^ p
-```
+曲線は「何時間 → 何点」の点を直線でつないだものです。既定は四点：
 
-- `t` = 相手の最後のメッセージからの時間（**宵禁を除く**）
-- `T` = 100 に達するまでの時間、既定 14 時間
-- `p` = 形、既定 1.5（1 は直線、1 より大きいと前半ゆっくり・後半急）
-
-| 経過 | スコア |
+| 経過時間 | スコア |
 |---|---|
-| 1 時間 | 2 |
-| 3 時間 | 10 |
-| 6 時間 | 28 |
-| 9 時間 | 52 |
-| 12 時間 | 79 |
-| 14 時間 | 100 |
+| 3 | 5 |
+| 8 | 40 |
+| 14 | 70 |
+| 20 | 100 |
+
+3 時間ではまだほぼ動かず、8 時間で考え始め、14 時間ではっきりし、20 時間で上限です。点は自由に足したり動かしたりできます（スコアは下がりません）。
 
 相手が一言話すたび、スコアはゼロに戻ります。
 
