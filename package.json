@@ -1,6 +1,6 @@
 {
   "name": "dsh-yearn",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "思念 / 恋しさ / Yearning — two numbers for an AI companion: how long since the human last spoke, and how many times it went back to old logs. Score is time only.",
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,7 @@
   },
   "main": "lib/index.js",
   "scripts": {
-    "check": "node --check client.js && node --check lib/index.js && node --check lib/core.js && node --test test/core.test.mjs test/host.test.mjs test/fields.test.mjs"
+    "check": "node --check client.js && node --check lib/index.js && node --check lib/core.js && node --test test/core.test.mjs test/host.test.mjs test/fields.test.mjs test/scenarios.test.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
