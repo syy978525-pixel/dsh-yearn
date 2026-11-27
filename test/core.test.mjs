@@ -9,8 +9,10 @@ import {
 const H = 3600000
 
 test('分数曲线：按点表连起来（默认 3h 5、8h 40、14h 70、20h 100）', () => {
-  assert.equal(scoreAt(0), 0)
-  assert.equal(scoreAt(1), 2)
+  // 刚说完话不是 0，有个底分
+  assert.equal(scoreAt(0), 3, '刚说完话该是底分 3，不是 0')
+  assert.equal(scoreAt(0, { scoreBase: 0 }), 0, '底分设 0 时才真的是 0')
+  assert.equal(scoreAt(1), 4)
   assert.equal(scoreAt(3), 5)
   assert.equal(scoreAt(6), 26)
   assert.equal(scoreAt(8), 40)
@@ -19,7 +21,7 @@ test('分数曲线：按点表连起来（默认 3h 5、8h 40、14h 70、20h 100
   assert.equal(scoreAt(14), 70)
   assert.equal(scoreAt(20), 100)
   assert.equal(scoreAt(30), 100)
-  assert.equal(scoreAt(-5), 0)
+  assert.equal(scoreAt(-5), 3)
 })
 
 test('反过来推：40 分在 8 小时，70 分在 14 小时', () => {
@@ -33,11 +35,12 @@ test('反过来推：40 分在 8 小时，70 分在 14 小时', () => {
 
 test('点表可以自己改：加一个点，曲线跟着变', () => {
   const pts = [[2, 10], [5, 30], [10, 90]]
-  assert.equal(scoreAt(2, { curvePoints: pts }), 10)
-  assert.equal(scoreAt(5, { curvePoints: pts }), 30)
-  assert.equal(scoreAt(10, { curvePoints: pts }), 90)
-  assert.equal(scoreAt(3.5, { curvePoints: pts }), 20)
-  assert.equal(scoreAt(15, { curvePoints: pts }), 100)
+  const c = { curvePoints: pts, scoreBase: 0 }
+  assert.equal(scoreAt(2, c), 10)
+  assert.equal(scoreAt(5, c), 30)
+  assert.equal(scoreAt(10, c), 90)
+  assert.equal(scoreAt(3.5, c), 20)
+  assert.equal(scoreAt(15, c), 100)
 })
 
 test('点表会自己修正：乱序、倒退的分数、只有一点', () => {
@@ -54,8 +57,9 @@ test('点表会自己修正：乱序、倒退的分数、只有一点', () => {
 
 test('到顶之后就停在 100', () => {
   const pts = [[1, 50], [3, 100]]
-  assert.equal(scoreAt(3, { curvePoints: pts }), 100)
-  assert.equal(scoreAt(100, { curvePoints: pts }), 100)
+  const c = { curvePoints: pts, scoreBase: 0 }
+  assert.equal(scoreAt(3, c), 100)
+  assert.equal(scoreAt(100, c), 100)
 })
 
 test('宵禁：同一天里的一段', () => {
